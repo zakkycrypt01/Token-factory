@@ -1,0 +1,77 @@
+#include "imports/stdlib.fc";
+
+;; Dictionary to store NFT ownership (token ID -> owner address)
+dict nft_ownership;
+
+;; Address of the NFT owner (admin)
+slice owner_address;
+
+;; Variable to store the next NFT ID
+var next_nft_id;
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) {
+  ;; Extract sender address
+  slice sender = get_sender_address(in_msg_full);
+  
+  ;; Command for NFT actions (mint, transfer)
+  int command = in_msg_body~load_uint(32);
+  
+  ;; Mint new NFT
+  if (command == 0x1) {
+    mint_nft(sender);
+  }
+  
+  ;; Transfer NFT
+  if (command == 0x2) {
+    transfer_nft(sender, in_msg_body);
+  }
+}
+
+;; Mint a new NFT (only the owner can mint)
+() mint_nft(slice sender) {
+  ;; Ensure only the owner can mint new NFTs
+  if (sender != owner_address) {
+    throw(101);  ;; Unauthorized access
+  }
+
+  ;; Assign the next NFT ID and increase the counter
+  var new_nft_id = next_nft_id;
+  next_nft_id = next_nft_id + 1;
+
+  ;; Assign the NFT to the owner
+  nft_ownership = nft_ownership.set(new_nft_id, sender);
+  
+  ;; Return the new NFT ID
+  send_nft_mint_response(sender, new_nft_id);
+}
+
+;; Transfer NFT to another address
+() transfer_nft(slice sender, slice in_msg_body) {
+  ;; Load the NFT ID and receiver's address
+  int nft_id = in_msg_body~load_uint(32);
+  slice receiver = in_msg_body~load_msg_addr();
+
+  ;; Check ownership of the NFT
+  var current_owner = nft_ownership.at(nft_id).get_or_default(0);
+  if (current_owner != sender) {
+    throw(102);  ;; Unauthorized transfer
+  }
+  
+  ;; Update the ownership
+  nft_ownership = nft_ownership.set(nft_id, receiver);
+}
+
+;; Get the sender's address from the incoming message
+slice get_sender_address(cell in_msg_full) {
+  slice sender_info = in_msg_full~load_slice().skip_bits(256);
+  return sender_info;
+}
+
+;; Send the response with the newly minted NFT ID
+() send_nft_mint_response(slice to, int nft_id) {
+  ;; Prepare the response cell
+  cell response = begin_cell().store_uint(nft_id, 32).end_cell();
+  
+  ;; Send the response to the sender
+  send_raw_message(begin_cell().store_slice(to).store_ref(response).end_cell(), 0);
+}
